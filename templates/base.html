@@ -3,27 +3,33 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}ログインシステム{% endblock %}</title>
+  <title>{% block title %}日報アプリ{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>📝</text></svg>">
   <style>
-    :root { --bg:#f4f6fb; --card:#fff; --primary:#3b5bdb; --danger:#e03131; --text:#222; --muted:#777; }
+    :root { --bg:#f4f6fb; --card:#fff; --primary:#3b5bdb; --danger:#e03131; --text:#222; --muted:#777;
+            --border:#d0d4dd; }
     * { box-sizing: border-box; }
     body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
            background:var(--bg); color:var(--text); }
     header { background:var(--primary); color:#fff; padding:12px 20px;
-             display:flex; align-items:center; justify-content:space-between; }
-    header a { color:#fff; text-decoration:none; margin-left:16px; }
+             display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+    header a { color:#fff; text-decoration:none; margin-left:16px; white-space:nowrap; }
+    header nav { display:flex; flex-wrap:wrap; row-gap:6px; }
     header .brand { font-weight:700; font-size:18px; }
-    .container { max-width:840px; margin:32px auto; padding:0 16px; }
+    .container { max-width:940px; margin:32px auto; padding:0 16px; }
     .card { background:var(--card); border-radius:12px; padding:24px;
             box-shadow:0 2px 10px rgba(0,0,0,.06); margin-bottom:20px; }
     .card.narrow { max-width:380px; margin-left:auto; margin-right:auto; }
     h1 { margin-top:0; font-size:22px; }
+    h2 { font-size:17px; margin:0 0 12px; }
     label { display:block; margin:12px 0 4px; font-size:14px; color:var(--muted); }
-    input, select { width:100%; padding:10px; border:1px solid #d0d4dd;
-                    border-radius:8px; font-size:15px; }
+    input, select, textarea { width:100%; padding:10px; border:1px solid var(--border);
+                    border-radius:8px; font-size:15px; font-family:inherit; background:#fff; }
+    textarea { min-height:110px; resize:vertical; line-height:1.6; }
     button { cursor:pointer; border:none; border-radius:8px; padding:10px 16px;
              font-size:15px; background:var(--primary); color:#fff; margin-top:16px; }
     button.danger { background:var(--danger); margin-top:0; }
+    button.ghost { background:#fff; color:var(--primary); border:1px solid var(--border); }
     button.small { padding:6px 10px; font-size:13px; margin-top:0; }
     .muted { color:var(--muted); font-size:14px; }
     .flash { padding:10px 14px; border-radius:8px; margin-bottom:12px; font-size:14px; }
@@ -32,24 +38,51 @@
     .table-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
     table { width:100%; border-collapse:collapse; }
     th, td { text-align:left; padding:10px; border-bottom:1px solid #eee; font-size:14px;
-             white-space:nowrap; }
+             white-space:nowrap; vertical-align:top; }
     th.wrap, td.wrap { white-space:normal; }
     .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; }
     .badge.admin { background:#fff3bf; color:#a06b00; }
     .badge.user { background:#e7f5ff; color:#1971c2; }
+    .badge.submitted { background:#e6fcf5; color:#0b7285; }
+    .badge.draft { background:#f1f3f5; color:#666; }
     .inline { display:flex; gap:6px; align-items:center; }
+    .actions { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-top:16px; }
+    .actions button, .actions a button { margin-top:0; }
     a.link { color:var(--primary); }
+    a.plain { text-decoration:none; color:inherit; }
+    .card-head { display:flex; justify-content:space-between; align-items:center;
+                 flex-wrap:wrap; gap:8px; margin-bottom:12px; }
+    .card-head h1 { margin:0; }
+    .filters { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; }
+    .filters label { margin-top:0; }
+    .stats { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:12px; }
+    .stat { background:#f8f9fc; border:1px solid #eef0f6; border-radius:10px; padding:14px; }
+    .stat .num { font-size:24px; font-weight:700; }
+    .pager { display:flex; gap:8px; align-items:center; justify-content:center; margin-top:16px; }
+    .section { margin-top:20px; }
+    .section h2 { border-bottom:1px solid #eee; padding-bottom:6px; }
+    .body-text { white-space:pre-wrap; line-height:1.7; margin:0; }
+    .comment { border-top:1px solid #eee; padding:12px 0; }
+    .comment:first-of-type { border-top:none; }
+    .comment .meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+                     font-size:13px; color:var(--muted); margin-bottom:4px; }
   </style>
 </head>
 <body>
   <header>
-    <span class="brand">🔐 ログインシステム</span>
+    <span class="brand">📝 日報アプリ</span>
     <nav>
       {% if current_user %}
         <a href="{{ url_for('dashboard') }}">ダッシュボード</a>
-        {% if current_user.is_admin %}<a href="{{ url_for('admin_users') }}">ユーザー管理</a>{% endif %}
-        {% if current_user.is_admin %}<a href="{{ url_for('admin_settings') }}">管理者設定</a>
-        {% else %}<a href="{{ url_for('settings') }}">アカウント設定</a>{% endif %}
+        <a href="{{ url_for('reports') }}">自分の日報</a>
+        <a href="{{ url_for('report_new') }}">日報を書く</a>
+        {% if current_user.is_admin %}
+          <a href="{{ url_for('admin_reports') }}">全員の日報</a>
+          <a href="{{ url_for('admin_users') }}">ユーザー管理</a>
+          <a href="{{ url_for('admin_settings') }}">管理者設定</a>
+        {% else %}
+          <a href="{{ url_for('settings') }}">アカウント設定</a>
+        {% endif %}
         <a href="{{ url_for('logout') }}">ログアウト</a>
       {% else %}
         <a href="{{ url_for('login') }}">利用者ログイン</a>

@@ -1,12 +1,10 @@
-"""管理者と利用者がログインできるシンプルな認証システム。
+"""日報アプリ。
 
-- セッションベースの認証
-- パスワードはハッシュ化して保存
-- admin / user のロールによるアクセス制御
-- 管理者はユーザー一覧・作成・ロール変更・削除が可能
+- セッションベースの認証（admin / user のロール）
+- 利用者は自分の日報を作成・編集・提出し、コメントをやり取りできる
+- 管理者は全員の日報を閲覧・検索・CSV 出力し、ユーザー管理もできる
 """
 import os
-from functools import wraps
 
 from flask import (
     Flask,
@@ -18,7 +16,9 @@ from flask import (
     url_for,
 )
 
+from auth import admin_required, current_user, login_required
 from models import ROLE_ADMIN, ROLE_USER, ROLES, User, db
+from reports import admin_summary, personal_summary, register_report_routes
 
 
 def _normalize_db_url(url: str) -> str:
@@ -47,6 +47,7 @@ def create_app() -> Flask:
         _seed_admin()
 
     _register_routes(app)
+    register_report_routes(app)
     return app
 
 
@@ -60,42 +61,6 @@ def _seed_admin() -> None:
         admin.set_password(admin_password)
         db.session.add(admin)
         db.session.commit()
-
-
-# ---------------------------------------------------------------------------
-# 認証ヘルパー
-# ---------------------------------------------------------------------------
-def current_user():
-    user_id = session.get("user_id")
-    if user_id is None:
-        return None
-    return db.session.get(User, user_id)
-
-
-def login_required(view):
-    @wraps(view)
-    def wrapped(*args, **kwargs):
-        if current_user() is None:
-            flash("ログインが必要です。", "error")
-            return redirect(url_for("login"))
-        return view(*args, **kwargs)
-
-    return wrapped
-
-
-def admin_required(view):
-    @wraps(view)
-    def wrapped(*args, **kwargs):
-        user = current_user()
-        if user is None:
-            flash("管理者ログインが必要です。", "error")
-            return redirect(url_for("admin_login"))
-        if not user.is_admin:
-            flash("管理者権限が必要です。", "error")
-            return redirect(url_for("dashboard"))
-        return view(*args, **kwargs)
-
-    return wrapped
 
 
 # ---------------------------------------------------------------------------
@@ -197,7 +162,13 @@ def _register_routes(app: Flask) -> None:
     @app.route("/dashboard")
     @login_required
     def dashboard():
-        return render_template("dashboard.html", user=current_user())
+        user = current_user()
+        return render_template(
+            "dashboard.html",
+            user=user,
+            summary=personal_summary(user),
+            admin=admin_summary() if user.is_admin else None,
+        )
 
     @app.route("/settings", methods=["GET", "POST"])
     @login_required

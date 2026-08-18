@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}{{ "日報を書く" if mode == "new" else "日報を編集" }}{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>{{ "📝 日報を書く" if mode == "new" else "✏️ 日報を編集" }}</h1>
+  <form method="post">
+    <label for="report_date">日付</label>
+    <input id="report_date" name="report_date" type="date" required
+           value="{{ form.report_date.strftime('%Y-%m-%d') if form.report_date is not string else form.report_date }}">
+
+    <label for="work_hours">作業時間（時間・任意）</label>
+    <input id="work_hours" name="work_hours" type="number" step="0.25" min="0" max="24"
+           placeholder="例: 8" value="{{ form.work_hours if form.work_hours is not none else '' }}">
+
+    <label for="work_content">業務内容（必須）</label>
+    <textarea id="work_content" name="work_content" required
+              placeholder="今日おこなった作業を記入してください。">{{ form.work_content }}</textarea>
+
+    <label for="tomorrow_plan">明日の予定</label>
+    <textarea id="tomorrow_plan" name="tomorrow_plan"
+              placeholder="明日取り組む予定の作業。">{{ form.tomorrow_plan }}</textarea>
+
+    <label for="issues">課題・所感</label>
+    <textarea id="issues" name="issues"
+              placeholder="困っていること、気づいたこと、共有したいこと。">{{ form.issues }}</textarea>
+
+    <div class="actions">
+      <button type="submit" name="action" value="draft" class="ghost">下書き保存</button>
+      <button type="submit" name="action" value="submit">提出する</button>
+      {% if report %}
+        <a href="{{ url_for('report_detail', report_id=report.id) }}"><button type="button" class="ghost">キャンセル</button></a>
+      {% else %}
+        <a href="{{ url_for('reports') }}"><button type="button" class="ghost">キャンセル</button></a>
+      {% endif %}
+    </div>
+    <p class="muted" style="margin-top:12px;">提出後もあとから編集できます。</p>
+  </form>
+</div>
+{% endblock %}

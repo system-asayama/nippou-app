@@ -2,16 +2,118 @@
 {% block title %}ダッシュボード{% endblock %}
 {% block content %}
 <div class="card">
-  <h1>ようこそ、{{ user.username }} さん</h1>
-  <p>
-    あなたのロール:
+  <div class="card-head">
+    <h1>{{ user.username }} さんのダッシュボード</h1>
     <span class="badge {{ user.role }}">{{ user.role }}</span>
-  </p>
-  {% if user.is_admin %}
-    <p class="muted">あなたは管理者です。ユーザーの作成・ロール変更・削除ができます。</p>
-    <a href="{{ url_for('admin_users') }}"><button>ユーザー管理へ</button></a>
+  </div>
+  <p class="muted">今日は {{ summary.today.strftime('%Y年%m月%d日') }} です。</p>
+
+  {% set today_report = summary.today_report %}
+  {% if today_report and today_report.is_submitted %}
+    <p>本日の日報は <span class="badge submitted">提出済み</span> です。</p>
+    <div class="actions">
+      <a href="{{ url_for('report_detail', report_id=today_report.id) }}"><button class="ghost">今日の日報を見る</button></a>
+    </div>
+  {% elif today_report %}
+    <p>本日の日報は <span class="badge draft">下書き</span> のままです。提出を忘れずに。</p>
+    <div class="actions">
+      <a href="{{ url_for('report_edit', report_id=today_report.id) }}"><button>下書きを仕上げる</button></a>
+    </div>
   {% else %}
-    <p class="muted">あなたは利用者です。一般ユーザー向けの機能を利用できます。</p>
+    <p>本日の日報はまだ作成されていません。</p>
+    <div class="actions">
+      <a href="{{ url_for('report_new') }}"><button>今日の日報を書く</button></a>
+    </div>
+  {% endif %}
+
+  <div class="stats section">
+    <div class="stat">
+      <div class="muted">今月の提出数</div>
+      <div class="num">{{ summary.submitted_this_month }}</div>
+    </div>
+    <div class="stat">
+      <div class="muted">下書きのまま</div>
+      <div class="num">{{ summary.draft_count }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h1>最近の自分の日報</h1>
+    <a class="link" href="{{ url_for('reports') }}">一覧を見る</a>
+  </div>
+  {% if summary.recent %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>日付</th><th>ステータス</th><th>作業時間</th><th class="wrap">業務内容</th></tr></thead>
+        <tbody>
+          {% for r in summary.recent %}
+          <tr>
+            <td><a class="link" href="{{ url_for('report_detail', report_id=r.id) }}">{{ r.report_date.strftime('%Y-%m-%d') }}</a></td>
+            <td><span class="badge {{ r.status }}">{{ r.status_label }}</span></td>
+            <td>{% if r.work_hours is not none %}{{ r.work_hours }} h{% else %}-{% endif %}</td>
+            <td class="wrap">{{ r.work_content[:60] }}{% if r.work_content|length > 60 %}…{% endif %}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">まだ日報がありません。</p>
   {% endif %}
 </div>
+
+{% if admin %}
+<div class="card">
+  <div class="card-head">
+    <h1>本日の提出状況（管理者）</h1>
+    <a class="link" href="{{ url_for('admin_reports') }}">全員の日報を見る</a>
+  </div>
+  <div class="stats">
+    <div class="stat">
+      <div class="muted">提出済み</div>
+      <div class="num">{{ admin.submitted_count }} / {{ admin.user_count }}</div>
+    </div>
+    <div class="stat">
+      <div class="muted">未提出</div>
+      <div class="num">{{ admin.not_submitted|length }}</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>未提出のユーザー</h2>
+    {% if admin.not_submitted %}
+      <p class="wrap">
+        {% for u in admin.not_submitted %}<span class="badge {{ u.role }}">{{ u.username }}</span> {% endfor %}
+      </p>
+    {% else %}
+      <p class="muted">全員が本日の日報を提出済みです。</p>
+    {% endif %}
+  </div>
+
+  <div class="section">
+    <h2>最近提出された日報</h2>
+    {% if admin.recent %}
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>日付</th><th>ユーザー</th><th>提出日時</th><th class="wrap">業務内容</th></tr></thead>
+          <tbody>
+            {% for r in admin.recent %}
+            <tr>
+              <td><a class="link" href="{{ url_for('report_detail', report_id=r.id) }}">{{ r.report_date.strftime('%Y-%m-%d') }}</a></td>
+              <td>{{ r.user.username if r.user }}</td>
+              <td class="muted">{% if r.submitted_at %}{{ r.submitted_at.strftime('%m-%d %H:%M') }}{% else %}-{% endif %}</td>
+              <td class="wrap">{{ r.work_content[:50] }}{% if r.work_content|length > 50 %}…{% endif %}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <p class="muted">まだ提出された日報がありません。</p>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
 {% endblock %}
