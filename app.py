@@ -18,7 +18,16 @@ from flask import (
 )
 
 from auth import admin_required, current_user, login_required
-from models import ROLE_ADMIN, ROLE_USER, ROLES, User, db
+from models import (
+    ROLE_ADMIN,
+    ROLE_USER,
+    ROLES,
+    STATUS_SUBMITTED,
+    DailyReport,
+    ReportComment,
+    User,
+    db,
+)
 from reports import admin_summary, personal_summary, register_report_routes
 
 
@@ -283,42 +292,56 @@ def _register_routes(app: Flask) -> None:
         return render_template("settings.html", user=user)
 
     # --- 管理者専用 ------------------------------------------------------
-    @app.route("/admin/settings", methods=["GET", "POST"])
+    @app.route("/admin/mypage", methods=["GET", "POST"])
     @admin_required
-    def admin_settings():
-        """管理者が自分のログインIDとパスワードを変更する。"""
+    def admin_mypage():
+        """管理者のマイページ。アカウント情報の確認とログインID・パスワードの変更。"""
         user = current_user()
 
         if request.method == "POST":
+            action = request.form.get("action")
             current_password = request.form.get("current_password") or ""
-            new_username = (request.form.get("username") or "").strip()
-            new_password = request.form.get("new_password") or ""
-            confirm = request.form.get("confirm") or ""
 
-            # 本人確認のため現在のパスワードを必須にする
+            # どの変更でも本人確認のため現在のパスワードを必須にする
             if not user.check_password(current_password):
                 flash("現在のパスワードが正しくありません。", "error")
-            elif not new_username:
-                flash("ログインIDを入力してください。", "error")
-            elif (
-                new_username != user.username
-                and User.query.filter_by(username=new_username).first() is not None
-            ):
-                flash("そのログインIDは既に使われています。", "error")
-            elif new_password and new_password != confirm:
-                flash("新しいパスワードが一致しません。", "error")
-            else:
-                user.username = new_username
-                if new_password:
+            elif action == "username":
+                new_username = (request.form.get("username") or "").strip()
+                if not new_username:
+                    flash("ログインIDを入力してください。", "error")
+                elif new_username == user.username:
+                    flash("ログインIDが変わっていません。", "error")
+                elif User.query.filter_by(username=new_username).first() is not None:
+                    flash("そのログインIDは既に使われています。", "error")
+                else:
+                    user.username = new_username
+                    db.session.commit()
+                    flash(f"ログインIDを「{new_username}」に変更しました。", "success")
+                    return redirect(url_for("admin_mypage"))
+            elif action == "password":
+                new_password = request.form.get("new_password") or ""
+                confirm = request.form.get("confirm") or ""
+                if len(new_password) < 8:
+                    flash("新しいパスワードは 8 文字以上にしてください。", "error")
+                elif new_password != confirm:
+                    flash("新しいパスワードが一致しません。", "error")
+                elif new_password == current_password:
+                    flash("現在と同じパスワードです。別のパスワードを設定してください。", "error")
+                else:
                     user.set_password(new_password)
-                db.session.commit()
-                msg = "ログインIDを更新しました。"
-                if new_password:
-                    msg = "ログインIDとパスワードを更新しました。"
-                flash(msg, "success")
-                return redirect(url_for("admin_settings"))
+                    db.session.commit()
+                    flash("パスワードを変更しました。", "success")
+                    return redirect(url_for("admin_mypage"))
+            else:
+                flash("不正な操作です。", "error")
 
-        return render_template("admin_settings.html", user=user)
+        return render_template("admin_mypage.html", user=user, stats=_admin_mypage_stats(user))
+
+    @app.route("/admin/settings")
+    @admin_required
+    def admin_settings():
+        """旧・管理者設定ページ。マイページへ統合したためリダイレクトする。"""
+        return redirect(url_for("admin_mypage"))
 
     @app.route("/admin/users")
     @admin_required
@@ -396,6 +419,19 @@ def _register_routes(app: Flask) -> None:
 
 def _admin_count() -> int:
     return User.query.filter_by(role=ROLE_ADMIN).count()
+
+
+def _admin_mypage_stats(user: User) -> dict:
+    """マイページに表示するアカウント情報のまとめ。"""
+    return {
+        "admin_count": _admin_count(),
+        "user_count": User.query.count(),
+        "report_count": DailyReport.query.filter_by(user_id=user.id).count(),
+        "submitted_count": DailyReport.query.filter_by(
+            user_id=user.id, status=STATUS_SUBMITTED
+        ).count(),
+        "comment_count": ReportComment.query.filter_by(user_id=user.id).count(),
+    }
 
 
 app = create_app()

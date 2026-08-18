@@ -79,7 +79,7 @@
         {% if current_user.is_admin %}
           <a href="{{ url_for('admin_reports') }}">全員の日報</a>
           <a href="{{ url_for('admin_users') }}">ユーザー管理</a>
-          <a href="{{ url_for('admin_settings') }}">管理者設定</a>
+          <a href="{{ url_for('admin_mypage') }}">マイページ</a>
         {% else %}
           <a href="{{ url_for('settings') }}">アカウント設定</a>
         {% endif %}

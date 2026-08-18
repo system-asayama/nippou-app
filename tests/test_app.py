@@ -410,3 +410,122 @@ class BootstrapAdminTestCase(unittest.TestCase):
         )
         self.assertIn("管理者「boss」を作成しました", res.get_data(as_text=True))
         self.assertEqual(self.admin_count(), 1)
+
+
+class AdminMypageTestCase(unittest.TestCase):
+    """管理者マイページ（ログインID・パスワード変更）のテスト。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = app_module.app
+        cls.app.config["TESTING"] = True
+
+    def setUp(self):
+        with self.app.app_context():
+            db.drop_all()
+            db.create_all()
+            app_module.bootstrap_admin(self.app)
+        self.client = self.app.test_client()
+        self.login_admin()
+
+    def login_admin(self, password="admin-pass"):
+        return self.client.post(
+            "/admin/login",
+            data={"username": "admin", "password": password},
+            follow_redirects=True,
+        )
+
+    def post_mypage(self, **data):
+        return self.client.post("/admin/mypage", data=data, follow_redirects=True)
+
+    def test_requires_admin(self):
+        self.client.get("/logout")
+        self.client.post(
+            "/register",
+            data={"username": "taro", "password": "pass1234", "confirm": "pass1234"},
+        )
+        self.client.post("/login", data={"username": "taro", "password": "pass1234"})
+        res = self.client.get("/admin/mypage")
+        self.assertEqual(res.status_code, 302)
+        res = self.client.get("/admin/mypage", follow_redirects=True)
+        self.assertIn("管理者権限が必要です", res.get_data(as_text=True))
+
+    def test_shows_account_info(self):
+        res = self.client.get("/admin/mypage")
+        body = res.get_data(as_text=True)
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("マイページ", body)
+        self.assertIn("admin", body)
+        self.assertIn("管理者の人数", body)
+
+    def test_old_settings_url_redirects(self):
+        res = self.client.get("/admin/settings")
+        self.assertEqual(res.status_code, 302)
+        self.assertTrue(res.headers["Location"].endswith("/admin/mypage"))
+
+    def test_change_username(self):
+        res = self.post_mypage(action="username", username="boss", current_password="admin-pass")
+        self.assertIn("ログインIDを「boss」に変更しました", res.get_data(as_text=True))
+
+        self.client.get("/logout")
+        res = self.client.post(
+            "/admin/login",
+            data={"username": "boss", "password": "admin-pass"},
+            follow_redirects=True,
+        )
+        self.assertIn("管理者としてログインしました", res.get_data(as_text=True))
+
+    def test_change_username_rejects_bad_input(self):
+        with self.app.app_context():
+            other = User(username="taro")
+            other.set_password("pass1234")
+            db.session.add(other)
+            db.session.commit()
+
+        cases = [
+            (dict(username="boss", current_password="wrong"), "現在のパスワードが正しくありません"),
+            (dict(username="", current_password="admin-pass"), "ログインIDを入力してください"),
+            (dict(username="admin", current_password="admin-pass"), "ログインIDが変わっていません"),
+            (dict(username="taro", current_password="admin-pass"), "既に使われています"),
+        ]
+        for data, message in cases:
+            with self.subTest(message=message):
+                res = self.post_mypage(action="username", **data)
+                self.assertIn(message, res.get_data(as_text=True))
+
+        with self.app.app_context():
+            self.assertIsNotNone(User.query.filter_by(username="admin").first())
+
+    def test_change_password(self):
+        res = self.post_mypage(
+            action="password",
+            new_password="new-password",
+            confirm="new-password",
+            current_password="admin-pass",
+        )
+        self.assertIn("パスワードを変更しました", res.get_data(as_text=True))
+        # 変更後もログインは維持される
+        self.assertEqual(self.client.get("/admin/mypage").status_code, 200)
+
+        self.client.get("/logout")
+        self.assertIn("正しくありません", self.login_admin("admin-pass").get_data(as_text=True))
+        self.assertIn("管理者としてログインしました", self.login_admin("new-password").get_data(as_text=True))
+
+    def test_change_password_rejects_bad_input(self):
+        cases = [
+            (dict(new_password="new-password", confirm="new-password", current_password="wrong"),
+             "現在のパスワードが正しくありません"),
+            (dict(new_password="short", confirm="short", current_password="admin-pass"),
+             "8 文字以上"),
+            (dict(new_password="new-password", confirm="different", current_password="admin-pass"),
+             "一致しません"),
+            (dict(new_password="admin-pass", confirm="admin-pass", current_password="admin-pass"),
+             "現在と同じパスワードです"),
+        ]
+        for data, message in cases:
+            with self.subTest(message=message):
+                res = self.post_mypage(action="password", **data)
+                self.assertIn(message, res.get_data(as_text=True))
+
+        self.client.get("/logout")
+        self.assertIn("管理者としてログインしました", self.login_admin().get_data(as_text=True))
