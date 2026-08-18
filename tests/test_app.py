@@ -18,8 +18,22 @@ os.environ["DATABASE_URL"] = f"sqlite:///{_DB_PATH}"
 os.environ["ADMIN_USERNAME"] = "admin"
 os.environ["ADMIN_PASSWORD"] = "admin-pass"
 
+from urllib.parse import quote_plus  # noqa: E402
+
+from cryptography.fernet import Fernet  # noqa: E402
+
 import app as app_module  # noqa: E402
-from models import DailyReport, ReportComment, User, db, today_jst  # noqa: E402
+import calendar_routes  # noqa: E402
+import google_calendar as gcal  # noqa: E402
+from models import (  # noqa: E402
+    DailyReport,
+    GoogleCalendarLink,
+    ReportCalendarEvent,
+    ReportComment,
+    User,
+    db,
+    today_jst,
+)
 
 
 class ReportAppTestCase(unittest.TestCase):
@@ -529,3 +543,293 @@ class AdminMypageTestCase(unittest.TestCase):
 
         self.client.get("/logout")
         self.assertIn("管理者としてログインしました", self.login_admin().get_data(as_text=True))
+
+
+class FakeGoogle:
+    """Google の OAuth / Calendar API を置き換えるテスト用ダブル。"""
+
+    def __init__(self):
+        self.token_requests = []
+        self.api_calls = []
+        self.events = {}
+        self.items = []
+        self.next_id = 1
+        self.scope = (
+            "https://www.googleapis.com/auth/calendar.events "
+            "https://www.googleapis.com/auth/userinfo.email"
+        )
+        self.refresh_token = "refresh-token-1"
+        self.fail_write = False
+
+    def post_form(self, url, data):
+        self.token_requests.append((url, data))
+        if url == gcal.REVOKE_ENDPOINT:
+            return {}
+        if data.get("grant_type") == "authorization_code":
+            return {
+                "access_token": "access-1",
+                "refresh_token": self.refresh_token,
+                "scope": self.scope,
+                "expires_in": 3599,
+            }
+        return {"access_token": "access-1", "expires_in": 3599}
+
+    def api(self, method, url, access_token, params=None, json=None):
+        self.api_calls.append((method, url, params, json))
+        if url == gcal.USERINFO_ENDPOINT:
+            return {"email": "taro@example.com"}
+        if method == "GET" and url.endswith("/events"):
+            return {"items": self.items}
+        if method == "POST" and url.endswith("/events"):
+            if self.fail_write:
+                raise gcal.CalendarError("書き込みに失敗しました")
+            event_id = f"evt-{self.next_id}"
+            self.next_id += 1
+            self.events[event_id] = json
+            return {"id": event_id}
+        if method == "PATCH":
+            event_id = url.rsplit("/", 1)[1]
+            if event_id not in self.events:
+                raise gcal.CalendarError("予定が見つかりません")
+            self.events[event_id] = json
+            return {"id": event_id}
+        if method == "DELETE":
+            self.events.pop(url.rsplit("/", 1)[1], None)
+            return {}
+        return {}
+
+
+class GoogleCalendarTestCase(unittest.TestCase):
+    """Google カレンダー連携（読み取りのみ / 書き込みも許可）のテスト。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = app_module.app
+        cls.app.config["TESTING"] = True
+
+    def setUp(self):
+        with self.app.app_context():
+            db.drop_all()
+            db.create_all()
+            app_module.bootstrap_admin(self.app)
+        self.client = self.app.test_client()
+        self.fake = FakeGoogle()
+        self._real = (gcal._post_form, gcal._api)
+        gcal._post_form, gcal._api = self.fake.post_form, self.fake.api
+        os.environ["GOOGLE_CLIENT_ID"] = "test-client-id"
+        os.environ["GOOGLE_CLIENT_SECRET"] = "test-secret"
+        os.environ["TOKEN_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+
+        self.client.post(
+            "/register",
+            data={"username": "taro", "password": "pass1234", "confirm": "pass1234"},
+        )
+        self.client.post("/login", data={"username": "taro", "password": "pass1234"})
+
+    def tearDown(self):
+        gcal._post_form, gcal._api = self._real
+        for key in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "TOKEN_ENCRYPTION_KEY"):
+            os.environ.pop(key, None)
+
+    # --- ヘルパー ----------------------------------------------------
+    def connect(self, scope=None):
+        """同意画面を通ったことにして連携を完了させる。"""
+        if scope is not None:
+            self.fake.scope = scope
+        with self.client.session_transaction() as sess:
+            sess[calendar_routes.STATE_KEY] = "state-1"
+        return self.client.get(
+            "/calendar/callback?code=auth-code&state=state-1", follow_redirects=True
+        )
+
+    def link(self):
+        with self.app.app_context():
+            return (
+                GoogleCalendarLink.query.join(User)
+                .filter(User.username == "taro")
+                .first()
+            )
+
+    def create_report(self, action="submit", content="テスト業務"):
+        self.client.post(
+            "/reports/new",
+            data={
+                "report_date": today_jst().strftime("%Y-%m-%d"),
+                "work_content": content,
+                "work_hours": "8",
+                "tomorrow_plan": "",
+                "issues": "",
+                "action": action,
+            },
+            follow_redirects=True,
+        )
+        with self.app.app_context():
+            return DailyReport.query.one().id
+
+    # --- 設定・認可 --------------------------------------------------
+    def test_disabled_when_not_configured(self):
+        os.environ.pop("GOOGLE_CLIENT_ID", None)
+        res = self.client.get("/calendar")
+        self.assertIn("まだ利用できません", res.get_data(as_text=True))
+
+        res = self.client.get("/calendar/connect?mode=readonly", follow_redirects=True)
+        self.assertIn("Google 連携が未設定です", res.get_data(as_text=True))
+
+    def test_connect_uses_scope_for_selected_mode(self):
+        res = self.client.get("/calendar/connect?mode=readonly")
+        self.assertEqual(res.status_code, 302)
+        location = res.headers["Location"]
+        self.assertIn("accounts.google.com", location)
+        self.assertIn(quote_plus("https://www.googleapis.com/auth/calendar.readonly"), location)
+        self.assertNotIn(quote_plus("https://www.googleapis.com/auth/calendar.events"), location)
+        self.assertIn("access_type=offline", location)
+
+        res = self.client.get("/calendar/connect?mode=write")
+        location = res.headers["Location"]
+        self.assertIn(quote_plus("https://www.googleapis.com/auth/calendar.events"), location)
+
+    def test_connect_rejects_unknown_mode(self):
+        res = self.client.get("/calendar/connect?mode=everything", follow_redirects=True)
+        self.assertIn("権限を選択してください", res.get_data(as_text=True))
+
+    def test_callback_requires_matching_state(self):
+        with self.client.session_transaction() as sess:
+            sess[calendar_routes.STATE_KEY] = "state-1"
+        res = self.client.get(
+            "/calendar/callback?code=auth-code&state=tampered", follow_redirects=True
+        )
+        self.assertIn("セッションが一致しません", res.get_data(as_text=True))
+        self.assertIsNone(self.link())
+
+    def test_callback_stores_encrypted_refresh_token(self):
+        res = self.connect()
+        self.assertIn("Google カレンダーと連携しました", res.get_data(as_text=True))
+        link = self.link()
+        self.assertEqual(link.mode, "write")
+        self.assertEqual(link.google_email, "taro@example.com")
+        # 生のトークンがそのまま保存されていないこと
+        self.assertNotIn("refresh-token-1", link.refresh_token_encrypted)
+        self.assertEqual(gcal.decrypt_token(link.refresh_token_encrypted), "refresh-token-1")
+
+    def test_granted_scope_decides_mode(self):
+        """書き込みを要求しても、実際に許可された範囲を保存する。"""
+        self.connect(scope="https://www.googleapis.com/auth/calendar.readonly")
+        self.assertEqual(self.link().mode, "readonly")
+
+    def test_callback_without_calendar_scope_fails(self):
+        res = self.connect(scope="https://www.googleapis.com/auth/userinfo.email")
+        self.assertIn("アクセスが許可されませんでした", res.get_data(as_text=True))
+        self.assertIsNone(self.link())
+
+    def test_disconnect_revokes_and_removes(self):
+        self.connect()
+        res = self.client.post("/calendar/disconnect", follow_redirects=True)
+        self.assertIn("連携を解除しました", res.get_data(as_text=True))
+        self.assertIsNone(self.link())
+        self.assertIn(gcal.REVOKE_ENDPOINT, [url for url, _ in self.fake.token_requests])
+
+    # --- 予定の取り込み ----------------------------------------------
+    def test_import_events_into_form(self):
+        self.connect(scope="https://www.googleapis.com/auth/calendar.readonly")
+        self.fake.items = [
+            {
+                "summary": "定例MTG",
+                "start": {"dateTime": "2026-08-19T09:00:00+09:00"},
+                "end": {"dateTime": "2026-08-19T10:00:00+09:00"},
+            },
+            {"summary": "全社イベント", "start": {"date": "2026-08-19"}, "end": {"date": "2026-08-20"}},
+            {
+                "summary": "断った打ち合わせ",
+                "start": {"dateTime": "2026-08-19T13:00:00+09:00"},
+                "end": {"dateTime": "2026-08-19T14:00:00+09:00"},
+                "attendees": [{"self": True, "responseStatus": "declined"}],
+            },
+        ]
+        res = self.client.get("/reports/new?from_calendar=1")
+        body = res.get_data(as_text=True)
+        self.assertIn("09:00-10:00 定例MTG", body)
+        self.assertIn("終日 全社イベント", body)
+        self.assertNotIn("断った打ち合わせ", body)  # 辞退した予定は取り込まない
+        self.assertIn("予定を 2 件取り込みました", body)
+
+    def test_import_without_link_asks_to_connect(self):
+        res = self.client.get("/reports/new?from_calendar=1", follow_redirects=True)
+        self.assertIn("先に Google カレンダーと連携してください", res.get_data(as_text=True))
+
+    # --- 日報の書き出し ----------------------------------------------
+    def test_submit_writes_event_when_write_allowed(self):
+        self.connect()
+        report_id = self.create_report()
+        self.assertEqual(len(self.fake.events), 1)
+        body = list(self.fake.events.values())[0]
+        self.assertIn("日報: taro", body["summary"])
+        self.assertIn("テスト業務", body["description"])
+        self.assertEqual(body["start"]["date"], today_jst().strftime("%Y-%m-%d"))
+        with self.app.app_context():
+            self.assertEqual(ReportCalendarEvent.query.filter_by(report_id=report_id).count(), 1)
+
+    def test_readonly_link_never_writes(self):
+        self.connect(scope="https://www.googleapis.com/auth/calendar.readonly")
+        self.create_report()
+        self.assertEqual(self.fake.events, {})
+        with self.app.app_context():
+            self.assertEqual(ReportCalendarEvent.query.count(), 0)
+
+    def test_draft_is_not_written(self):
+        self.connect()
+        self.create_report(action="draft")
+        self.assertEqual(self.fake.events, {})
+
+    def test_resubmit_updates_the_same_event(self):
+        self.connect()
+        report_id = self.create_report()
+        self.client.post(
+            f"/reports/{report_id}/edit",
+            data={
+                "report_date": today_jst().strftime("%Y-%m-%d"),
+                "work_content": "修正後の業務",
+                "work_hours": "8",
+                "tomorrow_plan": "",
+                "issues": "",
+                "action": "submit",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(len(self.fake.events), 1)  # 増えていない
+        self.assertIn("修正後の業務", list(self.fake.events.values())[0]["description"])
+
+    def test_unsubmit_and_delete_remove_the_event(self):
+        self.connect()
+        report_id = self.create_report()
+        self.client.post(f"/reports/{report_id}/submit", follow_redirects=True)  # 下書きへ
+        self.assertEqual(self.fake.events, {})
+        with self.app.app_context():
+            self.assertEqual(ReportCalendarEvent.query.count(), 0)
+
+        self.client.post(f"/reports/{report_id}/submit", follow_redirects=True)  # 再提出
+        self.assertEqual(len(self.fake.events), 1)
+        self.client.post(f"/reports/{report_id}/delete", follow_redirects=True)
+        self.assertEqual(self.fake.events, {})
+        with self.app.app_context():
+            self.assertEqual(ReportCalendarEvent.query.count(), 0)
+
+    def test_report_is_saved_even_if_calendar_write_fails(self):
+        self.connect()
+        self.fake.fail_write = True
+        res = self.client.post(
+            "/reports/new",
+            data={
+                "report_date": today_jst().strftime("%Y-%m-%d"),
+                "work_content": "書き出し失敗のテスト",
+                "work_hours": "8",
+                "tomorrow_plan": "",
+                "issues": "",
+                "action": "submit",
+            },
+            follow_redirects=True,
+        )
+        body = res.get_data(as_text=True)
+        self.assertIn("日報を提出しました", body)
+        self.assertIn("カレンダーへの書き出しに失敗しました", body)
+        with self.app.app_context():
+            self.assertEqual(DailyReport.query.count(), 1)

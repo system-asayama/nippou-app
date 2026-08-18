@@ -28,6 +28,7 @@ from models import (
     User,
     db,
 )
+from calendar_routes import register_calendar_routes
 from reports import admin_summary, personal_summary, register_report_routes
 
 
@@ -58,6 +59,7 @@ def create_app() -> Flask:
 
     _register_routes(app)
     register_report_routes(app)
+    register_calendar_routes(app)
     return app
 
 

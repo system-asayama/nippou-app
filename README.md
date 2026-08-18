@@ -32,6 +32,20 @@ Flask + SQLAlchemy で実装しています。
 - 日報へのコメント（本人と管理者が投稿・削除できる）
 - ダッシュボード（`/dashboard`）: 本日の日報の状態、今月の提出数、下書き数、直近の日報
 
+### Google カレンダー連携（OAuth 2.0 + Calendar API）
+
+- 連携は利用者ごと。`/calendar` から権限を選んで接続する
+  - **読み取りのみ**（`calendar.readonly`）: 予定を読み取って日報に取り込むだけ。カレンダーは変更しない
+  - **読み取りと書き込み**（`calendar.events`）: 上に加えて、提出した日報をその日の終日予定として書き出す
+- 同意画面で実際に許可された範囲を保存するため、書き込みを許可しなければ読み取りのみとして扱う
+- 日報の作成・編集画面から「Google カレンダーの予定を取り込む」で、その日の予定を業務内容へ挿入
+  （辞退した予定と削除済みの予定は除外）
+- 書き込み権限があるとき、日報の提出でカレンダーに登録、再提出で同じ予定を更新、
+  下書きに戻す・日報を削除すると予定も削除する
+- カレンダー側の失敗で日報の保存が妨げられることはない（警告を出すだけ）
+- リフレッシュトークンは暗号化して保存（`TOKEN_ENCRYPTION_KEY`、未設定なら `SECRET_KEY` から導出）
+- `/calendar` から連携解除（Google 側の許可も取り消す）
+
 ### 日報（管理者）
 
 - 全員の日報一覧（`/admin/reports`）: ユーザー・期間・ステータス・キーワードで絞り込み
@@ -53,6 +67,7 @@ Flask + SQLAlchemy で実装しています。
 | `/admin/users` | ユーザー管理（管理者） |
 | `/admin/mypage` | 管理者マイページ（ID・パスワード変更） |
 | `/setup` | 初期管理者の作成（管理者が 1 人も居ない間だけ有効） |
+| `/calendar` | Google カレンダー連携の設定（権限の選択・解除） |
 
 ## 初期管理者（ブートストラップ）
 
@@ -117,6 +132,10 @@ python -m unittest discover -s tests
 | `ADMIN_USERNAME` | 初期管理者のユーザー名（`ADMIN_PASSWORD` と両方揃ったときのみ有効） |
 | `ADMIN_PASSWORD` | 初期管理者のパスワード。未設定なら `/setup` で作成する |
 | `SETUP_TOKEN` | 設定すると `/setup` で合言葉の入力を必須にする |
+| `GOOGLE_CLIENT_ID` | Google OAuth クライアント ID。未設定ならカレンダー連携は無効 |
+| `GOOGLE_CLIENT_SECRET` | Google OAuth クライアントシークレット |
+| `GOOGLE_REDIRECT_URI` | コールバック URL を明示したい場合に設定（リバースプロキシ配下向け） |
+| `TOKEN_ENCRYPTION_KEY` | トークン暗号化鍵（Fernet 形式）。未設定なら `SECRET_KEY` から導出 |
 
 ## 構成
 
@@ -125,8 +144,29 @@ python -m unittest discover -s tests
 | `app.py` | アプリ生成、認証・ユーザー管理のルーティング |
 | `auth.py` | ログイン状態の取得と `login_required` / `admin_required` |
 | `reports.py` | 日報のルーティング、検索・集計・CSV 出力 |
-| `models.py` | `User` / `DailyReport` / `ReportComment` |
+| `google_calendar.py` | Google OAuth とカレンダー API、トークンの暗号化、日報の書き出し |
+| `calendar_routes.py` | 連携画面・認可・コールバック・解除 |
+| `models.py` | `User` / `DailyReport` / `ReportComment` / `GoogleCalendarLink` / `ReportCalendarEvent` |
 | `templates/` | 画面（Jinja2） |
 | `tests/` | スモークテスト |
 
 テーブルは起動時に `db.create_all()` で作成されます（既存テーブルはそのまま）。
+
+## Google カレンダー連携のセットアップ
+
+1. Google Cloud コンソールでプロジェクトを作り、**Google Calendar API** を有効化する
+2. 「OAuth 同意画面」を設定する（社内利用なら内部）。スコープは
+   `calendar.readonly` と `calendar.events`、`userinfo.email` を登録する
+3. 「認証情報」→ OAuth 2.0 クライアント ID（ウェブアプリケーション）を作成し、
+   **承認済みのリダイレクト URI** に `https://<アプリのURL>/calendar/callback` を追加する
+4. 発行された client ID / client secret を `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` に設定する
+5. トークン暗号化鍵を作って `TOKEN_ENCRYPTION_KEY` に設定する（推奨）
+
+   ```bash
+   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+   ```
+
+6. アプリを再起動し、各利用者が `/calendar` から権限を選んで連携する
+
+`TOKEN_ENCRYPTION_KEY` を未設定にすると `SECRET_KEY` から鍵を導出するため、
+`SECRET_KEY` を変更すると保存済みトークンが復号できなくなり、再連携が必要になります。

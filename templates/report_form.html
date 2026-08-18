@@ -13,6 +13,15 @@
            placeholder="例: 8" value="{{ form.work_hours if form.work_hours is not none else '' }}">
 
     <label for="work_content">業務内容（必須）</label>
+    <p class="muted" style="margin:0 0 6px;">
+      {% if mode == "new" %}
+        <a class="link" href="{{ url_for('report_new', date=form.report_date if form.report_date is string else form.report_date.strftime('%Y-%m-%d'), from_calendar=1) }}">
+      {% else %}
+        <a class="link" href="{{ url_for('report_edit', report_id=report.id, from_calendar=1) }}">
+      {% endif %}
+        📅 Google カレンダーの予定を取り込む</a>
+      <span class="muted">（入力中の内容は保存されません）</span>
+    </p>
     <textarea id="work_content" name="work_content" required
               placeholder="今日おこなった作業を記入してください。">{{ form.work_content }}</textarea>
 

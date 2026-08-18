@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}Google カレンダー連携{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-head">
+    <h1>📅 Google カレンダー連携</h1>
+    {% if link %}<span class="badge submitted">連携中</span>{% else %}<span class="badge draft">未連携</span>{% endif %}
+  </div>
+
+  {% if not configured %}
+    <p class="muted">
+      この機能はまだ利用できません。管理者が <code>GOOGLE_CLIENT_ID</code> と
+      <code>GOOGLE_CLIENT_SECRET</code> を設定すると使えるようになります。
+    </p>
+  {% elif link %}
+    <p class="muted">
+      連携先: <strong>{{ link.google_email or "（メールアドレス不明）" }}</strong>
+      ／ 権限: <strong>{{ link.mode_label }}</strong>
+      ／ 接続日: {{ link.connected_at.strftime('%Y-%m-%d %H:%M') }}
+    </p>
+    {% if link.can_write %}
+      <p class="muted">
+        日報を提出すると、その日の終日予定としてカレンダーに書き出します
+        （提出を取り消す・日報を削除すると予定も消えます）。
+      </p>
+    {% else %}
+      <p class="muted">
+        予定の読み取りのみ許可されています。カレンダーへの書き込みは行いません。
+      </p>
+    {% endif %}
+
+    <div class="section">
+      <h2>権限を変更する</h2>
+      <p class="muted">権限を変えるには Google の同意画面をもう一度通す必要があります。</p>
+      <div class="actions">
+        {% for m in modes %}
+          {% if m != link.mode %}
+            <a href="{{ url_for('calendar_connect', mode=m) }}">
+              <button class="ghost">{{ mode_labels[m] }}に変更する</button>
+            </a>
+          {% endif %}
+        {% endfor %}
+        <form method="post" action="{{ url_for('calendar_disconnect') }}"
+              onsubmit="return confirm('Google カレンダーの連携を解除しますか？');">
+          <button class="danger" type="submit">連携を解除する</button>
+        </form>
+      </div>
+    </div>
+  {% else %}
+    <p class="muted">
+      Google カレンダーと連携すると、その日の予定を日報の業務内容に取り込めます。
+      許可する権限は次の 2 つから選べます。
+    </p>
+    <div class="stats section">
+      <div class="stat">
+        <div class="muted">読み取りのみ</div>
+        <p class="muted" style="margin:8px 0;">
+          予定を読み取って日報に取り込みます。カレンダーは一切変更しません。
+        </p>
+        <a href="{{ url_for('calendar_connect', mode='readonly') }}">
+          <button>読み取りのみで連携</button>
+        </a>
+      </div>
+      <div class="stat">
+        <div class="muted">読み取りと書き込み</div>
+        <p class="muted" style="margin:8px 0;">
+          上に加えて、提出した日報をカレンダーに終日予定として書き出します。
+        </p>
+        <a href="{{ url_for('calendar_connect', mode='write') }}">
+          <button>書き込みも許可して連携</button>
+        </a>
+      </div>
+    </div>
+    <p class="muted">
+      同意画面でチェックを外した場合は、実際に許可された範囲で保存します
+      （書き込みを許可しなければ読み取りのみになります）。
+    </p>
+  {% endif %}
+</div>
+
+{% if link %}
+<div class="card">
+  <h1>今日（{{ today.strftime('%Y-%m-%d') }}）の予定</h1>
+  {% if events_error %}
+    <p class="flash error">{{ events_error }}</p>
+  {% elif events %}
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>時間</th><th class="wrap">予定</th></tr></thead>
+        <tbody>
+          {% for e in events %}
+          <tr>
+            <td>{% if e.all_day %}終日{% else %}{{ e.start.dateTime[11:16] }}-{{ e.end.dateTime[11:16] }}{% endif %}</td>
+            <td class="wrap">{{ e.summary }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  {% else %}
+    <p class="muted">今日の予定はありません。</p>
+  {% endif %}
+  <div class="actions">
+    <a href="{{ url_for('report_new', from_calendar=1) }}"><button>今日の予定から日報を作る</button></a>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

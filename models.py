@@ -17,6 +17,15 @@ STATUS_SUBMITTED = "submitted"
 STATUSES = (STATUS_DRAFT, STATUS_SUBMITTED)
 STATUS_LABELS = {STATUS_DRAFT: "下書き", STATUS_SUBMITTED: "提出済み"}
 
+# Google カレンダー連携で許可する権限
+CALENDAR_MODE_READONLY = "readonly"
+CALENDAR_MODE_WRITE = "write"
+CALENDAR_MODES = (CALENDAR_MODE_READONLY, CALENDAR_MODE_WRITE)
+CALENDAR_MODE_LABELS = {
+    CALENDAR_MODE_READONLY: "読み取りのみ",
+    CALENDAR_MODE_WRITE: "読み取りと書き込み",
+}
+
 # 日報は日本時間の日付で扱う（サーバーの TZ に依存させない）
 JST = timezone(timedelta(hours=9))
 
@@ -52,6 +61,12 @@ class User(db.Model):
         "ReportComment",
         back_populates="author",
         cascade="all, delete-orphan",
+    )
+    calendar_link = db.relationship(
+        "GoogleCalendarLink",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
     )
 
     def set_password(self, password: str) -> None:
@@ -100,6 +115,12 @@ class DailyReport(db.Model):
         cascade="all, delete-orphan",
         order_by="ReportComment.created_at",
     )
+    calendar_event = db.relationship(
+        "ReportCalendarEvent",
+        back_populates="report",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
     @property
     def is_submitted(self) -> bool:
@@ -139,3 +160,68 @@ class ReportComment(db.Model):
 
     def __repr__(self) -> str:  # pragma: no cover - デバッグ用
         return f"<ReportComment report={self.report_id} user={self.user_id}>"
+
+
+class GoogleCalendarLink(db.Model):
+    """ユーザーと Google カレンダーの連携情報。
+
+    リフレッシュトークンは暗号化して保存する（google_calendar.encrypt_token）。
+    mode が readonly なら予定の取り込みのみ、write なら日報の書き出しもできる。
+    """
+
+    __tablename__ = "google_calendar_links"
+
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(
+        db.Integer,
+        db.ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    google_email = db.Column(db.String(255))
+    calendar_id = db.Column(db.String(255), nullable=False, default="primary")
+    mode = db.Column(db.String(20), nullable=False, default=CALENDAR_MODE_READONLY)
+    refresh_token_encrypted = db.Column(db.Text, nullable=False)
+    granted_scope = db.Column(db.Text, nullable=False, default="")
+    connected_at = db.Column(db.DateTime, default=now_jst, nullable=False)
+    updated_at = db.Column(db.DateTime, default=now_jst, onupdate=now_jst, nullable=False)
+
+    user = db.relationship("User", back_populates="calendar_link")
+
+    @property
+    def can_write(self) -> bool:
+        return self.mode == CALENDAR_MODE_WRITE
+
+    @property
+    def mode_label(self) -> str:
+        return CALENDAR_MODE_LABELS.get(self.mode, self.mode)
+
+    def __repr__(self) -> str:  # pragma: no cover - デバッグ用
+        return f"<GoogleCalendarLink user={self.user_id} {self.mode}>"
+
+
+class ReportCalendarEvent(db.Model):
+    """日報をカレンダーへ書き出したときのイベント ID。
+
+    同じ日報を二重に登録せず、更新・削除できるようにするために持つ。
+    """
+
+    __tablename__ = "report_calendar_events"
+
+    id = db.Column(db.Integer, primary_key=True)
+    report_id = db.Column(
+        db.Integer,
+        db.ForeignKey("daily_reports.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+    calendar_id = db.Column(db.String(255), nullable=False, default="primary")
+    event_id = db.Column(db.String(255), nullable=False)
+    synced_at = db.Column(db.DateTime, default=now_jst, onupdate=now_jst, nullable=False)
+
+    report = db.relationship("DailyReport", back_populates="calendar_event")
+
+    def __repr__(self) -> str:  # pragma: no cover - デバッグ用
+        return f"<ReportCalendarEvent report={self.report_id} event={self.event_id}>"

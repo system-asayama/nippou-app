@@ -13,6 +13,7 @@ from flask import (
     url_for,
 )
 
+import google_calendar as gcal
 from auth import admin_required, current_user, login_required
 from models import (
     STATUS_DRAFT,
@@ -172,6 +173,51 @@ def admin_summary():
 
 
 # ---------------------------------------------------------------------------
+# Google カレンダー連携
+# ---------------------------------------------------------------------------
+def _import_calendar_text(user, day, existing: str) -> str:
+    """その日の予定を取り込み、業務内容のテキストに足して返す。"""
+    link = user.calendar_link
+    if link is None:
+        flash("先に Google カレンダーと連携してください。", "error")
+        return existing
+
+    try:
+        events = gcal.list_events(link, day)
+    except gcal.CalendarError as exc:
+        flash(str(exc), "error")
+        return existing
+
+    if not events:
+        flash(f"{day:%Y-%m-%d} の予定は見つかりませんでした。", "error")
+        return existing
+
+    flash(f"{day:%Y-%m-%d} の予定を {len(events)} 件取り込みました。", "success")
+    text = gcal.format_events(events)
+    return f"{existing}\n{text}".strip() if existing.strip() else text
+
+
+def _sync_calendar(report) -> None:
+    """提出済みの日報をカレンダーへ書き出す（書き込み権限があるときだけ）。
+
+    日報自体は保存済みなので、失敗しても警告を出すだけにする。
+    """
+    try:
+        if gcal.push_report(report):
+            flash("Google カレンダーにも書き出しました。", "success")
+    except gcal.CalendarError as exc:
+        flash(f"カレンダーへの書き出しに失敗しました: {exc}", "error")
+
+
+def _unsync_calendar(report) -> None:
+    """書き出した予定を消す。"""
+    try:
+        gcal.remove_report(report)
+    except gcal.CalendarError as exc:
+        flash(f"カレンダーの予定を削除できませんでした: {exc}", "error")
+
+
+# ---------------------------------------------------------------------------
 # ルーティング
 # ---------------------------------------------------------------------------
 def register_report_routes(app) -> None:
@@ -223,6 +269,8 @@ def register_report_routes(app) -> None:
             db.session.add(report)
             db.session.commit()
             flash(_saved_message(report), "success")
+            if report.is_submitted:
+                _sync_calendar(report)
             return redirect(url_for("report_detail", report_id=report.id))
 
         form = {
@@ -233,6 +281,8 @@ def register_report_routes(app) -> None:
             "issues": "",
             "submit": False,
         }
+        if request.args.get("from_calendar"):
+            form["work_content"] = _import_calendar_text(user, default_date, "")
         return render_template("report_form.html", report=None, form=form, mode="new")
 
     @app.route("/reports/<int:report_id>")
@@ -266,6 +316,10 @@ def register_report_routes(app) -> None:
             _assign(report, form)
             db.session.commit()
             flash(_saved_message(report), "success")
+            if report.is_submitted:
+                _sync_calendar(report)
+            else:
+                _unsync_calendar(report)
             return redirect(url_for("report_detail", report_id=report.id))
 
         form = {
@@ -276,12 +330,17 @@ def register_report_routes(app) -> None:
             "issues": report.issues,
             "submit": report.is_submitted,
         }
+        if request.args.get("from_calendar"):
+            form["work_content"] = _import_calendar_text(
+                current_user(), report.report_date, report.work_content
+            )
         return render_template("report_form.html", report=report, form=form, mode="edit")
 
     @app.route("/reports/<int:report_id>/delete", methods=["POST"])
     @login_required
     def report_delete(report_id):
         report = _get_own_report(report_id)
+        _unsync_calendar(report)
         db.session.delete(report)
         db.session.commit()
         flash("日報を削除しました。", "success")
@@ -302,6 +361,10 @@ def register_report_routes(app) -> None:
             message = "日報を提出しました。"
         db.session.commit()
         flash(message, "success")
+        if report.is_submitted:
+            _sync_calendar(report)
+        else:
+            _unsync_calendar(report)
         return redirect(url_for("report_detail", report_id=report.id))
 
     @app.route("/reports/<int:report_id>/comments", methods=["POST"])
