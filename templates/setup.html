@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}初期セットアップ{% endblock %}
+{% block content %}
+<div class="card narrow">
+  <h1>🚀 初期セットアップ</h1>
+  <p class="muted">
+    管理者アカウントがまだありません。最初の管理者をここで作成してください。
+    この画面は管理者が 1 人も居ない間だけ表示されます。
+  </p>
+  <form method="post">
+    {% if token_required %}
+    <label for="token">セットアップ用の合言葉</label>
+    <input id="token" name="token" type="password" required
+           placeholder="環境変数 SETUP_TOKEN の値">
+    {% endif %}
+
+    <label for="username">管理者のユーザー名</label>
+    <input id="username" name="username" autofocus required>
+
+    <label for="password">パスワード（8 文字以上）</label>
+    <input id="password" name="password" type="password" minlength="8" required>
+
+    <label for="confirm">パスワード（確認）</label>
+    <input id="confirm" name="confirm" type="password" minlength="8" required>
+
+    <button type="submit">管理者を作成してログイン</button>
+  </form>
+</div>
+{% endblock %}

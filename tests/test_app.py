@@ -32,7 +32,7 @@ class ReportAppTestCase(unittest.TestCase):
         with self.app.app_context():
             db.drop_all()
             db.create_all()
-            app_module._seed_admin()
+            app_module.bootstrap_admin(self.app)
         self.client = self.app.test_client()
 
     @classmethod
@@ -298,3 +298,115 @@ class ReportAppTestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BootstrapAdminTestCase(unittest.TestCase):
+    """初期管理者のブートストラップと /setup 画面のテスト。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = app_module.app
+        cls.app.config["TESTING"] = True
+
+    def setUp(self):
+        with self.app.app_context():
+            db.drop_all()
+            db.create_all()
+        self.client = self.app.test_client()
+        self._saved_env = {
+            key: os.environ.get(key)
+            for key in ("ADMIN_USERNAME", "ADMIN_PASSWORD", "SETUP_TOKEN")
+        }
+        for key in self._saved_env:
+            os.environ.pop(key, None)
+
+    def tearDown(self):
+        for key, value in self._saved_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+    def admin_count(self):
+        with self.app.app_context():
+            return User.query.filter_by(role="admin").count()
+
+    def test_no_admin_created_without_env(self):
+        with self.app.app_context():
+            self.assertFalse(app_module.bootstrap_admin(self.app))
+        self.assertEqual(self.admin_count(), 0)
+        # 管理者不在なら / は初期セットアップへ誘導する
+        res = self.client.get("/", follow_redirects=True)
+        self.assertIn("初期セットアップ", res.get_data(as_text=True))
+
+    def test_bootstrap_from_env_runs_once(self):
+        os.environ["ADMIN_USERNAME"] = "boss"
+        os.environ["ADMIN_PASSWORD"] = "boss-password"
+        with self.app.app_context():
+            self.assertTrue(app_module.bootstrap_admin(self.app))
+            # 2 回目以降は何もしない
+            self.assertFalse(app_module.bootstrap_admin(self.app))
+        self.assertEqual(self.admin_count(), 1)
+
+        res = self.client.post(
+            "/admin/login",
+            data={"username": "boss", "password": "boss-password"},
+            follow_redirects=True,
+        )
+        self.assertIn("管理者としてログインしました", res.get_data(as_text=True))
+
+    def test_bootstrap_skips_when_username_taken(self):
+        with self.app.app_context():
+            user = User(username="boss")
+            user.set_password("pass1234")
+            db.session.add(user)
+            db.session.commit()
+        os.environ["ADMIN_USERNAME"] = "boss"
+        os.environ["ADMIN_PASSWORD"] = "boss-password"
+        with self.app.app_context():
+            self.assertFalse(app_module.bootstrap_admin(self.app))
+        self.assertEqual(self.admin_count(), 0)
+
+    def test_setup_creates_admin_and_logs_in(self):
+        res = self.client.post(
+            "/setup",
+            data={"username": "boss", "password": "boss-password", "confirm": "boss-password"},
+            follow_redirects=True,
+        )
+        body = res.get_data(as_text=True)
+        self.assertIn("管理者「boss」を作成しました", body)
+        self.assertIn("本日の提出状況", body)  # 管理者としてログイン済み
+        self.assertEqual(self.admin_count(), 1)
+
+        # 2 回目以降は使えない
+        res = self.client.get("/setup", follow_redirects=True)
+        self.assertIn("初期セットアップは使用できません", res.get_data(as_text=True))
+
+    def test_setup_validations(self):
+        cases = [
+            ({"username": "", "password": "boss-password", "confirm": "boss-password"},
+             "ユーザー名とパスワードを入力してください"),
+            ({"username": "boss", "password": "short", "confirm": "short"},
+             "8 文字以上"),
+            ({"username": "boss", "password": "boss-password", "confirm": "different"},
+             "パスワードが一致しません"),
+        ]
+        for data, message in cases:
+            with self.subTest(message=message):
+                res = self.client.post("/setup", data=data, follow_redirects=True)
+                self.assertIn(message, res.get_data(as_text=True))
+        self.assertEqual(self.admin_count(), 0)
+
+    def test_setup_requires_token_when_configured(self):
+        os.environ["SETUP_TOKEN"] = "secret-token"
+        data = {"username": "boss", "password": "boss-password", "confirm": "boss-password"}
+
+        res = self.client.post("/setup", data=dict(data, token="wrong"), follow_redirects=True)
+        self.assertIn("合言葉が正しくありません", res.get_data(as_text=True))
+        self.assertEqual(self.admin_count(), 0)
+
+        res = self.client.post(
+            "/setup", data=dict(data, token="secret-token"), follow_redirects=True
+        )
+        self.assertIn("管理者「boss」を作成しました", res.get_data(as_text=True))
+        self.assertEqual(self.admin_count(), 1)

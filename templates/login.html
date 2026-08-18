@@ -16,5 +16,11 @@
   <p class="muted">
     管理者の方は <a class="link" href="{{ url_for('admin_login') }}">管理者ログイン</a> へ
   </p>
+  {% if needs_setup %}
+  <p class="muted" style="margin-top:16px;">
+    管理者アカウントがまだありません。
+    <a class="link" href="{{ url_for('setup') }}">初期セットアップ</a> から作成してください。
+  </p>
+  {% endif %}
 </div>
 {% endblock %}

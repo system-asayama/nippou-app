@@ -14,5 +14,11 @@
   <p class="muted" style="margin-top:16px;">
     利用者の方は <a class="link" href="{{ url_for('login') }}">利用者ログイン</a> へ
   </p>
+  {% if needs_setup %}
+  <p class="muted" style="margin-top:16px;">
+    管理者アカウントがまだありません。
+    <a class="link" href="{{ url_for('setup') }}">初期セットアップ</a> から作成してください。
+  </p>
+  {% endif %}
 </div>
 {% endblock %}

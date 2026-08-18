@@ -6,8 +6,10 @@ services:
     environment:
       DATABASE_URL: postgresql://app:app@db:5432/easy_login_system_app
       SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
-      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      # 管理者が 1 人も居ないときだけ使われる初期管理者（未設定なら /setup で作成）
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-}
+      SETUP_TOKEN: ${SETUP_TOKEN:-}
     depends_on:
       - db
     restart: unless-stopped

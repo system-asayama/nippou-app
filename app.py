@@ -4,6 +4,7 @@
 - 利用者は自分の日報を作成・編集・提出し、コメントをやり取りできる
 - 管理者は全員の日報を閲覧・検索・CSV 出力し、ユーザー管理もできる
 """
+import hmac
 import os
 
 from flask import (
@@ -44,23 +45,55 @@ def create_app() -> Flask:
 
     with app.app_context():
         db.create_all()
-        _seed_admin()
+        bootstrap_admin(app)
 
     _register_routes(app)
     register_report_routes(app)
     return app
 
 
-def _seed_admin() -> None:
-    """初期管理者アカウントを作成する（既に存在する場合は何もしない）。"""
-    admin_username = os.environ.get("ADMIN_USERNAME", "admin")
-    admin_password = os.environ.get("ADMIN_PASSWORD", "admin123")
+# ---------------------------------------------------------------------------
+# 初期管理者のブートストラップ
+# ---------------------------------------------------------------------------
+def admin_exists() -> bool:
+    """管理者が 1 人でも登録されているか。"""
+    return User.query.filter_by(role=ROLE_ADMIN).first() is not None
 
-    if User.query.filter_by(username=admin_username).first() is None:
-        admin = User(username=admin_username, role=ROLE_ADMIN)
-        admin.set_password(admin_password)
-        db.session.add(admin)
-        db.session.commit()
+
+def bootstrap_admin(app: Flask) -> bool:
+    """管理者が 1 人も居ないときだけ初期管理者を作成する。
+
+    ADMIN_USERNAME と ADMIN_PASSWORD の両方が設定されていればそれで作成する
+    （自動デプロイ向け）。未設定なら何も作らず、初回のみ `/setup` 画面から
+    管理者を作成できる状態にしておく。既に管理者が居る場合は常に何もしない
+    ので、管理者を消しても弱いパスワードのアカウントが復活することはない。
+    """
+    if admin_exists():
+        return False
+
+    username = (os.environ.get("ADMIN_USERNAME") or "").strip()
+    password = os.environ.get("ADMIN_PASSWORD") or ""
+    if not username or not password:
+        app.logger.warning(
+            "管理者が未登録です。ADMIN_USERNAME / ADMIN_PASSWORD が未設定のため、"
+            "/setup から初期管理者を作成してください。"
+        )
+        return False
+
+    if User.query.filter_by(username=username).first() is not None:
+        app.logger.warning(
+            "ADMIN_USERNAME=%s は既に利用者として使われているため初期管理者を作成できません。"
+            "/setup から別の名前で作成してください。",
+            username,
+        )
+        return False
+
+    admin = User(username=username, role=ROLE_ADMIN)
+    admin.set_password(password)
+    db.session.add(admin)
+    db.session.commit()
+    app.logger.info("初期管理者 %s を作成しました。", username)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -69,13 +102,55 @@ def _seed_admin() -> None:
 def _register_routes(app: Flask) -> None:
     @app.context_processor
     def inject_user():
-        return {"current_user": current_user()}
+        return {"current_user": current_user(), "needs_setup": not admin_exists()}
 
     @app.route("/")
     def index():
         if current_user() is not None:
             return redirect(url_for("dashboard"))
+        if not admin_exists():
+            return redirect(url_for("setup"))
         return redirect(url_for("login"))
+
+    @app.route("/setup", methods=["GET", "POST"])
+    def setup():
+        """初回だけ使える管理者作成画面。管理者が既に居る場合は使えない。
+
+        SETUP_TOKEN が設定されている場合は、その合言葉の入力を必須にする。
+        """
+        if admin_exists():
+            flash("管理者は既に登録済みです。初期セットアップは使用できません。", "error")
+            return redirect(url_for("admin_login"))
+
+        expected_token = os.environ.get("SETUP_TOKEN") or ""
+
+        if request.method == "POST":
+            username = (request.form.get("username") or "").strip()
+            password = request.form.get("password") or ""
+            confirm = request.form.get("confirm") or ""
+            token = request.form.get("token") or ""
+
+            if expected_token and not hmac.compare_digest(token, expected_token):
+                flash("セットアップ用の合言葉が正しくありません。", "error")
+            elif not username or not password:
+                flash("ユーザー名とパスワードを入力してください。", "error")
+            elif len(password) < 8:
+                flash("パスワードは 8 文字以上にしてください。", "error")
+            elif password != confirm:
+                flash("パスワードが一致しません。", "error")
+            elif User.query.filter_by(username=username).first() is not None:
+                flash("そのユーザー名は既に使われています。", "error")
+            else:
+                admin = User(username=username, role=ROLE_ADMIN)
+                admin.set_password(password)
+                db.session.add(admin)
+                db.session.commit()
+                session.clear()
+                session["user_id"] = admin.id
+                flash(f"管理者「{username}」を作成しました。", "success")
+                return redirect(url_for("dashboard"))
+
+        return render_template("setup.html", token_required=bool(expected_token))
 
     @app.route("/register", methods=["GET", "POST"])
     def register():
