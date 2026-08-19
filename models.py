@@ -225,3 +225,23 @@ class ReportCalendarEvent(db.Model):
 
     def __repr__(self) -> str:  # pragma: no cover - デバッグ用
         return f"<ReportCalendarEvent report={self.report_id} event={self.event_id}>"
+
+
+class GoogleOAuthSetting(db.Model):
+    """Google OAuth クライアントの設定（アプリ画面から管理者が登録する）。
+
+    1 行だけ使う。環境変数より優先され、設定が無ければ環境変数へフォールバックする。
+    クライアントシークレットは暗号化して保存する。
+    """
+
+    __tablename__ = "google_oauth_settings"
+
+    id = db.Column(db.Integer, primary_key=True)
+    client_id = db.Column(db.String(255), nullable=False, default="")
+    client_secret_encrypted = db.Column(db.Text, nullable=False, default="")
+    redirect_uri = db.Column(db.String(500), nullable=False, default="")
+    updated_by = db.Column(db.String(80))
+    updated_at = db.Column(db.DateTime, default=now_jst, onupdate=now_jst, nullable=False)
+
+    def __repr__(self) -> str:  # pragma: no cover - デバッグ用
+        return f"<GoogleOAuthSetting {self.client_id[:20]}>"

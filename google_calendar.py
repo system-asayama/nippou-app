@@ -20,6 +20,7 @@ from models import (
     CALENDAR_MODE_WRITE,
     JST,
     GoogleCalendarLink,
+    GoogleOAuthSetting,
     ReportCalendarEvent,
     db,
     now_jst,
@@ -53,11 +54,23 @@ class CalendarError(Exception):
 # ---------------------------------------------------------------------------
 # 設定
 # ---------------------------------------------------------------------------
+def stored_setting():
+    """管理者がアプリ画面から登録した設定（無ければ None）。"""
+    return GoogleOAuthSetting.query.first()
+
+
 def client_id() -> str:
+    """クライアント ID。アプリ内の設定を優先し、無ければ環境変数を使う。"""
+    setting = stored_setting()
+    if setting is not None and setting.client_id:
+        return setting.client_id
     return (os.environ.get("GOOGLE_CLIENT_ID") or "").strip()
 
 
 def client_secret() -> str:
+    setting = stored_setting()
+    if setting is not None and setting.client_secret_encrypted:
+        return decrypt_token(setting.client_secret_encrypted)
     return (os.environ.get("GOOGLE_CLIENT_SECRET") or "").strip()
 
 
@@ -66,8 +79,23 @@ def is_configured() -> bool:
     return bool(client_id() and client_secret())
 
 
+def settings_source() -> str:
+    """設定の出どころ。画面に表示して混乱を防ぐ。"""
+    setting = stored_setting()
+    if setting is not None and setting.client_id and setting.client_secret_encrypted:
+        return "app"
+    if (os.environ.get("GOOGLE_CLIENT_ID") or "").strip() and (
+        os.environ.get("GOOGLE_CLIENT_SECRET") or ""
+    ).strip():
+        return "env"
+    return "none"
+
+
 def redirect_uri(default: str) -> str:
-    """GOOGLE_REDIRECT_URI があればそれを使う（リバースプロキシ配下の対策）。"""
+    """コールバック URL。アプリ内の設定 → 環境変数 → 実際のリクエストの順に使う。"""
+    setting = stored_setting()
+    if setting is not None and setting.redirect_uri:
+        return setting.redirect_uri
     return (os.environ.get("GOOGLE_REDIRECT_URI") or "").strip() or default
 
 

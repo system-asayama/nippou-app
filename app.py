@@ -17,6 +17,9 @@ from flask import (
     url_for,
 )
 
+from werkzeug.middleware.proxy_fix import ProxyFix
+
+import google_calendar as gcal
 from auth import admin_required, current_user, login_required
 from models import (
     ROLE_ADMIN,
@@ -24,6 +27,7 @@ from models import (
     ROLES,
     STATUS_SUBMITTED,
     DailyReport,
+    GoogleOAuthSetting,
     ReportComment,
     User,
     db,
@@ -41,6 +45,9 @@ def _normalize_db_url(url: str) -> str:
 
 def create_app() -> Flask:
     app = Flask(__name__)
+    # リバースプロキシ配下でも https / 実ホスト名で外部 URL を作れるようにする
+    # （Google に登録するコールバック URL の表示と一致させるため）
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     app.config["SECRET_KEY"] = os.environ.get("SECRET_KEY", "dev-secret-change-me")
 
     database_url = os.environ.get("DATABASE_URL")
@@ -338,6 +345,54 @@ def _register_routes(app: Flask) -> None:
                 flash("不正な操作です。", "error")
 
         return render_template("admin_mypage.html", user=user, stats=_admin_mypage_stats(user))
+
+    @app.route("/admin/google", methods=["GET", "POST"])
+    @admin_required
+    def admin_google():
+        """Google 連携（OAuth クライアント）の設定。管理者がアプリ画面から登録する。"""
+        setting = GoogleOAuthSetting.query.first()
+        callback_url = url_for("calendar_callback", _external=True)
+
+        if request.method == "POST":
+            if request.form.get("action") == "delete":
+                if setting is not None:
+                    db.session.delete(setting)
+                    db.session.commit()
+                flash("アプリ内の設定を削除しました。", "success")
+                return redirect(url_for("admin_google"))
+
+            new_client_id = (request.form.get("client_id") or "").strip()
+            new_secret = (request.form.get("client_secret") or "").strip()
+            new_redirect = (request.form.get("redirect_uri") or "").strip()
+            # 保存済みのシークレットは伏せて表示するため、空欄なら据え置く
+            keeps_secret = setting is not None and bool(setting.client_secret_encrypted)
+
+            if not new_client_id:
+                flash("クライアント ID を入力してください。", "error")
+            elif not new_secret and not keeps_secret:
+                flash("クライアントシークレットを入力してください。", "error")
+            else:
+                if setting is None:
+                    setting = GoogleOAuthSetting()
+                    db.session.add(setting)
+                setting.client_id = new_client_id
+                if new_secret:
+                    setting.client_secret_encrypted = gcal.encrypt_token(new_secret)
+                setting.redirect_uri = new_redirect
+                setting.updated_by = current_user().username
+                db.session.commit()
+                flash(
+                    "Google 連携の設定を保存しました。各利用者は「カレンダー」から自分のアカウントを連携できます。",
+                    "success",
+                )
+                return redirect(url_for("admin_google"))
+
+        return render_template(
+            "admin_google.html",
+            setting=setting,
+            callback_url=callback_url,
+            source=gcal.settings_source(),
+        )
 
     @app.route("/admin/settings")
     @admin_required

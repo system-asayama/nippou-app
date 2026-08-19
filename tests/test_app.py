@@ -28,6 +28,7 @@ import google_calendar as gcal  # noqa: E402
 from models import (  # noqa: E402
     DailyReport,
     GoogleCalendarLink,
+    GoogleOAuthSetting,
     ReportCalendarEvent,
     ReportComment,
     User,
@@ -833,3 +834,112 @@ class GoogleCalendarTestCase(unittest.TestCase):
         self.assertIn("カレンダーへの書き出しに失敗しました", body)
         with self.app.app_context():
             self.assertEqual(DailyReport.query.count(), 1)
+
+
+class AdminGoogleSettingTestCase(unittest.TestCase):
+    """管理者がアプリ画面から Google 連携を設定できることのテスト。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = app_module.app
+        cls.app.config["TESTING"] = True
+
+    def setUp(self):
+        with self.app.app_context():
+            db.drop_all()
+            db.create_all()
+            app_module.bootstrap_admin(self.app)
+        self.client = self.app.test_client()
+        os.environ["TOKEN_ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+        for key in ("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI"):
+            os.environ.pop(key, None)
+        self.client.post(
+            "/admin/login", data={"username": "admin", "password": "admin-pass"}
+        )
+
+    def tearDown(self):
+        os.environ.pop("TOKEN_ENCRYPTION_KEY", None)
+
+    def save(self, **data):
+        payload = {"client_id": "cid.apps.googleusercontent.com", "client_secret": "secret-1"}
+        payload.update(data)
+        return self.client.post("/admin/google", data=payload, follow_redirects=True)
+
+    def test_requires_admin(self):
+        self.client.get("/logout")
+        self.client.post(
+            "/register",
+            data={"username": "taro", "password": "pass1234", "confirm": "pass1234"},
+        )
+        self.client.post("/login", data={"username": "taro", "password": "pass1234"})
+        self.assertEqual(self.client.get("/admin/google").status_code, 302)
+        self.assertEqual(self.client.post("/admin/google", data={}).status_code, 302)
+
+    def test_shows_callback_url_to_register(self):
+        res = self.client.get("/admin/google")
+        self.assertIn("/calendar/callback", res.get_data(as_text=True))
+
+    def test_saving_enables_the_feature_for_users(self):
+        res = self.save()
+        self.assertIn("設定を保存しました", res.get_data(as_text=True))
+        with self.app.app_context():
+            self.assertTrue(gcal.is_configured())
+            self.assertEqual(gcal.client_id(), "cid.apps.googleusercontent.com")
+            self.assertEqual(gcal.client_secret(), "secret-1")
+            self.assertEqual(gcal.settings_source(), "app")
+
+        # 利用者側の連携ボタンが Google へ飛ぶようになる
+        self.client.get("/logout")
+        self.client.post(
+            "/register",
+            data={"username": "taro", "password": "pass1234", "confirm": "pass1234"},
+        )
+        self.client.post("/login", data={"username": "taro", "password": "pass1234"})
+        res = self.client.get("/calendar/connect?mode=readonly")
+        self.assertEqual(res.status_code, 302)
+        self.assertIn("client_id=cid.apps.googleusercontent.com", res.headers["Location"])
+
+    def test_secret_is_encrypted_and_never_rendered(self):
+        self.save()
+        with self.app.app_context():
+            setting = GoogleOAuthSetting.query.one()
+            self.assertNotIn("secret-1", setting.client_secret_encrypted)
+        self.assertNotIn("secret-1", self.client.get("/admin/google").get_data(as_text=True))
+
+    def test_secret_is_kept_when_left_blank(self):
+        self.save()
+        self.save(client_id="new-cid", client_secret="")
+        with self.app.app_context():
+            self.assertEqual(gcal.client_id(), "new-cid")
+            self.assertEqual(gcal.client_secret(), "secret-1")
+
+    def test_validation(self):
+        res = self.save(client_id="")
+        self.assertIn("クライアント ID を入力してください", res.get_data(as_text=True))
+        res = self.save(client_secret="")
+        self.assertIn("クライアントシークレットを入力してください", res.get_data(as_text=True))
+        with self.app.app_context():
+            self.assertEqual(GoogleOAuthSetting.query.count(), 0)
+
+    def test_custom_redirect_uri_is_used(self):
+        self.save(redirect_uri="https://example.com/calendar/callback")
+        with self.app.app_context():
+            self.assertEqual(
+                gcal.redirect_uri("http://fallback/calendar/callback"),
+                "https://example.com/calendar/callback",
+            )
+
+    def test_delete_falls_back_to_environment(self):
+        self.save()
+        os.environ["GOOGLE_CLIENT_ID"] = "env-cid"
+        os.environ["GOOGLE_CLIENT_SECRET"] = "env-secret"
+        try:
+            with self.app.app_context():
+                self.assertEqual(gcal.client_id(), "cid.apps.googleusercontent.com")
+            self.client.post("/admin/google", data={"action": "delete"}, follow_redirects=True)
+            with self.app.app_context():
+                self.assertEqual(gcal.client_id(), "env-cid")
+                self.assertEqual(gcal.settings_source(), "env")
+        finally:
+            os.environ.pop("GOOGLE_CLIENT_ID", None)
+            os.environ.pop("GOOGLE_CLIENT_SECRET", None)

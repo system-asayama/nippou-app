@@ -8,10 +8,19 @@
   </div>
 
   {% if not configured %}
-    <p class="muted">
-      この機能はまだ利用できません。管理者が <code>GOOGLE_CLIENT_ID</code> と
-      <code>GOOGLE_CLIENT_SECRET</code> を設定すると使えるようになります。
-    </p>
+    {% if current_user.is_admin %}
+      <p class="muted">
+        まだ Google 側のアプリ登録が済んでいません。設定ページで登録すると、
+        各利用者がここから自分のアカウントを連携できるようになります。
+      </p>
+      <div class="actions">
+        <a href="{{ url_for('admin_google') }}"><button>Google 連携設定を開く</button></a>
+      </div>
+    {% else %}
+      <p class="muted">
+        この機能はまだ利用できません。管理者が Google 連携設定を登録すると使えるようになります。
+      </p>
+    {% endif %}
   {% elif link %}
     <p class="muted">
       連携先: <strong>{{ link.google_email or "（メールアドレス不明）" }}</strong>

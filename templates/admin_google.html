@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block title %}Google 連携設定{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-head">
+    <h1>🔧 Google 連携設定（管理者）</h1>
+    {% if source == "app" %}<span class="badge submitted">設定済み</span>
+    {% elif source == "env" %}<span class="badge admin">環境変数で設定中</span>
+    {% else %}<span class="badge draft">未設定</span>{% endif %}
+  </div>
+  <p class="muted">
+    ここで登録するのは「このアプリを Google に登録するための ID」で、会社全体で 1 つだけ必要です。
+    登録が済むと、<strong>利用者は各自が「カレンダー」から自分の Google アカウントを連携</strong>できるようになります
+    （利用者ごとの登録作業はここでは不要です）。
+  </p>
+  {% if source == "env" %}
+    <p class="muted">
+      現在はサーバーの環境変数の設定が使われています。下のフォームで登録すると、そちらが優先されます。
+    </p>
+  {% endif %}
+
+  <div class="section">
+    <h2>1. Google Cloud で登録するコールバック URL</h2>
+    <p class="muted">Google Cloud の「承認済みのリダイレクト URI」に、次の URL をそのまま登録してください。</p>
+    <input type="text" readonly value="{{ setting.redirect_uri or callback_url }}"
+           onclick="this.select();" style="font-family:monospace;">
+    <p class="muted" style="margin-top:8px;">
+      手順: Google Cloud コンソール →「API とサービス」→ Calendar API を有効化 →「OAuth 同意画面」を設定 →
+      「認証情報」→「OAuth クライアント ID」（ウェブアプリケーション）を作成し、上の URL を登録します。
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  <h1>2. クライアント ID とシークレットを登録</h1>
+  <form method="post" action="{{ url_for('admin_google') }}">
+    <label for="client_id">クライアント ID</label>
+    <input id="client_id" name="client_id" required
+           placeholder="000000000000-xxxxxxxx.apps.googleusercontent.com"
+           value="{{ setting.client_id if setting else '' }}">
+
+    <label for="client_secret">クライアントシークレット</label>
+    <input id="client_secret" name="client_secret" type="password" autocomplete="new-password"
+           placeholder="{% if setting and setting.client_secret_encrypted %}変更する場合のみ入力（空欄なら現在の値を維持）{% else %}GOCSPX-...{% endif %}">
+    <p class="muted" style="margin:6px 0 0;">暗号化して保存され、画面には表示されません。</p>
+
+    <label for="redirect_uri">コールバック URL（空欄なら自動判定）</label>
+    <input id="redirect_uri" name="redirect_uri" placeholder="{{ callback_url }}"
+           value="{{ setting.redirect_uri if setting else '' }}">
+    <p class="muted" style="margin:6px 0 0;">
+      自動判定がうまくいかない場合（プロキシ配下など）だけ、Google に登録したものと同じ URL を入力してください。
+    </p>
+
+    <div class="actions">
+      <button type="submit">保存する</button>
+      <a href="{{ url_for('calendar_settings') }}"><button type="button" class="ghost">カレンダー連携へ</button></a>
+    </div>
+  </form>
+
+  {% if setting %}
+  <div class="section">
+    <p class="muted">
+      最終更新: {{ setting.updated_at.strftime('%Y-%m-%d %H:%M') }}
+      {% if setting.updated_by %}（{{ setting.updated_by }}）{% endif %}
+    </p>
+    <form method="post" action="{{ url_for('admin_google') }}"
+          onsubmit="return confirm('アプリ内の設定を削除しますか？');">
+      <input type="hidden" name="action" value="delete">
+      <button class="danger" type="submit">この設定を削除する</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <p class="muted" style="margin-top:16px;">
+    ⚠️ クライアント ID を別のものに変更すると、既に連携済みの利用者は連携が無効になり、各自での再連携が必要になります。
+  </p>
+</div>
+{% endblock %}

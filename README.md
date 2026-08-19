@@ -34,7 +34,10 @@ Flask + SQLAlchemy で実装しています。
 
 ### Google カレンダー連携（OAuth 2.0 + Calendar API）
 
-- 連携は利用者ごと。`/calendar` から権限を選んで接続する
+- **アプリの登録（管理者・1 回だけ）**: `/admin/google` でクライアント ID とシークレットを登録する。
+  Google Cloud に登録するコールバック URL もこの画面に表示される。サーバーの環境変数でも設定でき、
+  アプリ内の設定が優先される（環境変数はフォールバック）。シークレットは暗号化して保存
+- **利用者の連携（各自）**: `/calendar` から自分の Google アカウントを接続し、権限を選ぶ
   - **読み取りのみ**（`calendar.readonly`）: 予定を読み取って日報に取り込むだけ。カレンダーは変更しない
   - **読み取りと書き込み**（`calendar.events`）: 上に加えて、提出した日報をその日の終日予定として書き出す
 - 同意画面で実際に許可された範囲を保存するため、書き込みを許可しなければ読み取りのみとして扱う
@@ -66,6 +69,7 @@ Flask + SQLAlchemy で実装しています。
 | `/admin/reports.csv` | 日報の CSV 出力（管理者） |
 | `/admin/users` | ユーザー管理（管理者） |
 | `/admin/mypage` | 管理者マイページ（ID・パスワード変更） |
+| `/admin/google` | Google 連携設定（管理者。クライアント ID / シークレット） |
 | `/setup` | 初期管理者の作成（管理者が 1 人も居ない間だけ有効） |
 | `/calendar` | Google カレンダー連携の設定（権限の選択・解除） |
 
@@ -132,7 +136,7 @@ python -m unittest discover -s tests
 | `ADMIN_USERNAME` | 初期管理者のユーザー名（`ADMIN_PASSWORD` と両方揃ったときのみ有効） |
 | `ADMIN_PASSWORD` | 初期管理者のパスワード。未設定なら `/setup` で作成する |
 | `SETUP_TOKEN` | 設定すると `/setup` で合言葉の入力を必須にする |
-| `GOOGLE_CLIENT_ID` | Google OAuth クライアント ID。未設定ならカレンダー連携は無効 |
+| `GOOGLE_CLIENT_ID` | Google OAuth クライアント ID（`/admin/google` の設定が優先） |
 | `GOOGLE_CLIENT_SECRET` | Google OAuth クライアントシークレット |
 | `GOOGLE_REDIRECT_URI` | コールバック URL を明示したい場合に設定（リバースプロキシ配下向け） |
 | `TOKEN_ENCRYPTION_KEY` | トークン暗号化鍵（Fernet 形式）。未設定なら `SECRET_KEY` から導出 |
@@ -146,7 +150,7 @@ python -m unittest discover -s tests
 | `reports.py` | 日報のルーティング、検索・集計・CSV 出力 |
 | `google_calendar.py` | Google OAuth とカレンダー API、トークンの暗号化、日報の書き出し |
 | `calendar_routes.py` | 連携画面・認可・コールバック・解除 |
-| `models.py` | `User` / `DailyReport` / `ReportComment` / `GoogleCalendarLink` / `ReportCalendarEvent` |
+| `models.py` | `User` / `DailyReport` / `ReportComment` / `GoogleCalendarLink` / `ReportCalendarEvent` / `GoogleOAuthSetting` |
 | `templates/` | 画面（Jinja2） |
 | `tests/` | スモークテスト |
 
@@ -158,8 +162,10 @@ python -m unittest discover -s tests
 2. 「OAuth 同意画面」を設定する（社内利用なら内部）。スコープは
    `calendar.readonly` と `calendar.events`、`userinfo.email` を登録する
 3. 「認証情報」→ OAuth 2.0 クライアント ID（ウェブアプリケーション）を作成し、
-   **承認済みのリダイレクト URI** に `https://<アプリのURL>/calendar/callback` を追加する
-4. 発行された client ID / client secret を `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` に設定する
+   **承認済みのリダイレクト URI** に `/admin/google` に表示される URL をそのまま追加する
+   （通常は `https://<アプリのURL>/calendar/callback`）
+4. 発行された client ID / client secret を、管理者としてログインして `/admin/google` に登録する
+   （サーバーの環境変数 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` でも設定可能）
 5. トークン暗号化鍵を作って `TOKEN_ENCRYPTION_KEY` に設定する（推奨）
 
    ```bash
