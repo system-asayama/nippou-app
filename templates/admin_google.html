@@ -22,17 +22,43 @@
   <div class="section">
     <h2>1. Google Cloud で登録するコールバック URL</h2>
     <p class="muted">Google Cloud の「承認済みのリダイレクト URI」に、次の URL をそのまま登録してください。</p>
-    <input type="text" readonly value="{{ setting.redirect_uri or callback_url }}"
-           onclick="this.select();" style="font-family:monospace;">
-    <p class="muted" style="margin-top:8px;">
-      手順: Google Cloud コンソール →「API とサービス」→ Calendar API を有効化 →「OAuth 同意画面」を設定 →
-      「認証情報」→「OAuth クライアント ID」（ウェブアプリケーション）を作成し、上の URL を登録します。
-    </p>
+    <div class="copy-row">
+      <input id="callback-url" type="text" readonly value="{{ setting.redirect_uri or callback_url }}"
+             onclick="this.select();" style="font-family:monospace;">
+      <button type="button" class="copy-btn" data-copy-target="callback-url">コピー</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>2. Google Cloud での作業（別タブで開きます）</h2>
+    <ol class="steps">
+      <li>
+        <a class="link" href="https://console.cloud.google.com/projectcreate" target="_blank" rel="noopener">
+          プロジェクトを作成</a>（既にあればそのまま次へ）
+      </li>
+      <li>
+        <a class="link" href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com"
+           target="_blank" rel="noopener">Google Calendar API を有効化</a>
+      </li>
+      <li>
+        <a class="link" href="https://console.cloud.google.com/apis/credentials/consent"
+           target="_blank" rel="noopener">OAuth 同意画面を設定</a>
+        <span class="muted">（Google Workspace なら「内部」、それ以外は「外部」＋利用者をテストユーザーに追加）</span>
+      </li>
+      <li>
+        <a class="link" href="https://console.cloud.google.com/apis/credentials"
+           target="_blank" rel="noopener">認証情報 → OAuth クライアント ID を作成</a>
+        <span class="muted">
+          （種類は「ウェブアプリケーション」。「承認済みのリダイレクト URI」に上のコールバック URL を貼る）
+        </span>
+      </li>
+      <li>発行された<strong>クライアント ID</strong>と<strong>クライアントシークレット</strong>を、下の欄に貼って保存</li>
+    </ol>
   </div>
 </div>
 
 <div class="card">
-  <h1>2. クライアント ID とシークレットを登録</h1>
+  <h1>3. クライアント ID とシークレットを登録</h1>
   <form method="post" action="{{ url_for('admin_google') }}">
     <label for="client_id">クライアント ID</label>
     <input id="client_id" name="client_id" required
@@ -75,4 +101,41 @@
     ⚠️ クライアント ID を別のものに変更すると、既に連携済みの利用者は連携が無効になり、各自での再連携が必要になります。
   </p>
 </div>
+
+
+<style>
+  .copy-row { display:flex; gap:8px; align-items:stretch; }
+  .copy-row input { flex:1; min-width:0; }
+  .copy-btn { margin-top:0; white-space:nowrap; }
+  .copy-btn.done { background:#0c8599; }
+  .steps { margin:0; padding-left:1.3em; line-height:1.9; font-size:15px; }
+  .steps .muted { display:block; font-size:13px; }
+</style>
+<script>
+  document.querySelectorAll(".copy-btn").forEach(function (button) {
+    button.addEventListener("click", function () {
+      var field = document.getElementById(button.dataset.copyTarget);
+      if (!field) return;
+      var done = function () {
+        var original = button.textContent;
+        button.textContent = "コピーしました";
+        button.classList.add("done");
+        setTimeout(function () {
+          button.textContent = original;
+          button.classList.remove("done");
+        }, 1500);
+      };
+      // https では Clipboard API、それ以外は選択してのコピーにフォールバックする
+      field.select();
+      field.setSelectionRange(0, field.value.length);
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(field.value).then(done, function () {
+          if (document.execCommand("copy")) done();
+        });
+      } else if (document.execCommand("copy")) {
+        done();
+      }
+    });
+  });
+</script>
 {% endblock %}

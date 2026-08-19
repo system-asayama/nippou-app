@@ -879,6 +879,17 @@ class AdminGoogleSettingTestCase(unittest.TestCase):
         res = self.client.get("/admin/google")
         self.assertIn("/calendar/callback", res.get_data(as_text=True))
 
+    def test_shows_copy_button_and_google_console_links(self):
+        body = self.client.get("/admin/google").get_data(as_text=True)
+        self.assertIn('data-copy-target="callback-url"', body)
+        for url in (
+            "https://console.cloud.google.com/projectcreate",
+            "https://console.cloud.google.com/apis/library/calendar-json.googleapis.com",
+            "https://console.cloud.google.com/apis/credentials/consent",
+            "https://console.cloud.google.com/apis/credentials",
+        ):
+            self.assertIn(url, body)
+
     def test_saving_enables_the_feature_for_users(self):
         res = self.save()
         self.assertIn("設定を保存しました", res.get_data(as_text=True))
