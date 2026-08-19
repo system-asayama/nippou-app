@@ -943,3 +943,46 @@ class AdminGoogleSettingTestCase(unittest.TestCase):
         finally:
             os.environ.pop("GOOGLE_CLIENT_ID", None)
             os.environ.pop("GOOGLE_CLIENT_SECRET", None)
+
+
+class HeaderMenuTestCase(unittest.TestCase):
+    """ヘッダーのハンバーガーメニューのテスト。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app = app_module.app
+        cls.app.config["TESTING"] = True
+
+    def setUp(self):
+        with self.app.app_context():
+            db.drop_all()
+            db.create_all()
+            app_module.bootstrap_admin(self.app)
+        self.client = self.app.test_client()
+
+    def test_menu_is_rendered_for_guests(self):
+        body = self.client.get("/login").get_data(as_text=True)
+        self.assertIn('<details class="menu"', body)
+        self.assertIn("利用者ログイン", body)
+        self.assertIn("管理者ログイン", body)
+
+    def test_user_menu_hides_admin_links(self):
+        self.client.post(
+            "/register",
+            data={"username": "taro", "password": "pass1234", "confirm": "pass1234"},
+        )
+        self.client.post("/login", data={"username": "taro", "password": "pass1234"})
+        body = self.client.get("/dashboard").get_data(as_text=True)
+        self.assertIn('<details class="menu"', body)
+        for label in ("ダッシュボード", "自分の日報", "日報を書く", "カレンダー連携", "ログアウト"):
+            self.assertIn(label, body)
+        for label in ("ユーザー管理", "Google 連携設定"):
+            self.assertNotIn(label, body)
+
+    def test_admin_menu_has_admin_links(self):
+        self.client.post(
+            "/admin/login", data={"username": "admin", "password": "admin-pass"}
+        )
+        body = self.client.get("/dashboard").get_data(as_text=True)
+        for label in ("全員の日報", "ユーザー管理", "Google 連携設定", "マイページ"):
+            self.assertIn(label, body)

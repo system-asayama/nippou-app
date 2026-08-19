@@ -12,10 +12,34 @@
     body { margin:0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
            background:var(--bg); color:var(--text); }
     header { background:var(--primary); color:#fff; padding:12px 20px;
-             display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
-    header a { color:#fff; text-decoration:none; margin-left:16px; white-space:nowrap; }
-    header nav { display:flex; flex-wrap:wrap; row-gap:6px; }
+             display:flex; align-items:center; justify-content:space-between; gap:8px;
+             position:relative; }
     header .brand { font-weight:700; font-size:18px; }
+
+    /* ハンバーガーメニュー（details/summary で開閉） */
+    .menu > summary { list-style:none; cursor:pointer; padding:8px 10px; border-radius:8px;
+                      display:flex; align-items:center; justify-content:center; }
+    .menu > summary::-webkit-details-marker { display:none; }
+    .menu > summary:hover, .menu[open] > summary { background:rgba(255,255,255,.18); }
+    .menu .bars { display:block; width:22px; height:2px; background:#fff; border-radius:2px;
+                  position:relative; }
+    .menu .bars::before, .menu .bars::after { content:""; position:absolute; left:0;
+                  width:22px; height:2px; background:#fff; border-radius:2px; }
+    .menu .bars::before { top:-7px; }
+    .menu .bars::after { top:7px; }
+    .menu[open] .bars { background:transparent; }
+    .menu[open] .bars::before { top:0; transform:rotate(45deg); }
+    .menu[open] .bars::after { top:0; transform:rotate(-45deg); }
+    .menu nav { position:absolute; right:16px; top:calc(100% + 8px); z-index:50;
+                background:#fff; border-radius:12px; padding:8px; min-width:230px;
+                display:flex; flex-direction:column;
+                box-shadow:0 10px 28px rgba(0,0,0,.20); }
+    .menu nav a { color:var(--text); text-decoration:none; padding:11px 14px;
+                  border-radius:8px; font-size:15px; white-space:nowrap; }
+    .menu nav a:hover { background:#f1f3f9; }
+    .menu nav .menu-label { color:var(--muted); font-size:12px; padding:6px 14px 2px; }
+    .menu nav .sep { height:1px; background:#eee; margin:6px 6px; }
+    @media (max-width:520px) { .menu nav { right:12px; left:12px; } }
     .container { max-width:940px; margin:32px auto; padding:0 16px; }
     .card { background:var(--card); border-radius:12px; padding:24px;
             box-shadow:0 2px 10px rgba(0,0,0,.06); margin-bottom:20px; }
@@ -71,26 +95,37 @@
 <body>
   <header>
     <span class="brand">📝 日報アプリ</span>
-    <nav>
-      {% if current_user %}
-        <a href="{{ url_for('dashboard') }}">ダッシュボード</a>
-        <a href="{{ url_for('reports') }}">自分の日報</a>
-        <a href="{{ url_for('report_new') }}">日報を書く</a>
-        <a href="{{ url_for('calendar_settings') }}">カレンダー</a>
-        {% if current_user.is_admin %}
-          <a href="{{ url_for('admin_reports') }}">全員の日報</a>
-          <a href="{{ url_for('admin_users') }}">ユーザー管理</a>
-          <a href="{{ url_for('admin_mypage') }}">マイページ</a>
+    <details class="menu" id="global-menu">
+      <summary aria-label="メニューを開く" title="メニュー">
+        <span class="bars" aria-hidden="true"></span>
+      </summary>
+      <nav>
+        {% if current_user %}
+          <span class="menu-label">{{ current_user.username }} さん</span>
+          <a href="{{ url_for('dashboard') }}">ダッシュボード</a>
+          <a href="{{ url_for('reports') }}">自分の日報</a>
+          <a href="{{ url_for('report_new') }}">日報を書く</a>
+          <a href="{{ url_for('calendar_settings') }}">カレンダー連携</a>
+          {% if current_user.is_admin %}
+            <span class="sep"></span>
+            <span class="menu-label">管理</span>
+            <a href="{{ url_for('admin_reports') }}">全員の日報</a>
+            <a href="{{ url_for('admin_users') }}">ユーザー管理</a>
+            <a href="{{ url_for('admin_google') }}">Google 連携設定</a>
+            <a href="{{ url_for('admin_mypage') }}">マイページ</a>
+          {% else %}
+            <span class="sep"></span>
+            <a href="{{ url_for('settings') }}">アカウント設定</a>
+          {% endif %}
+          <span class="sep"></span>
+          <a href="{{ url_for('logout') }}">ログアウト</a>
         {% else %}
-          <a href="{{ url_for('settings') }}">アカウント設定</a>
+          <a href="{{ url_for('login') }}">利用者ログイン</a>
+          <a href="{{ url_for('admin_login') }}">管理者ログイン</a>
+          <a href="{{ url_for('register') }}">新規登録</a>
         {% endif %}
-        <a href="{{ url_for('logout') }}">ログアウト</a>
-      {% else %}
-        <a href="{{ url_for('login') }}">利用者ログイン</a>
-        <a href="{{ url_for('admin_login') }}">管理者ログイン</a>
-        <a href="{{ url_for('register') }}">新規登録</a>
-      {% endif %}
-    </nav>
+      </nav>
+    </details>
   </header>
   <div class="container">
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -100,5 +135,18 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </div>
+  <script>
+    // メニューの外側をクリック、または Esc で閉じる
+    (function () {
+      var menu = document.getElementById("global-menu");
+      if (!menu) return;
+      document.addEventListener("click", function (event) {
+        if (menu.open && !menu.contains(event.target)) menu.open = false;
+      });
+      document.addEventListener("keydown", function (event) {
+        if (event.key === "Escape") menu.open = false;
+      });
+    })();
+  </script>
 </body>
 </html>
